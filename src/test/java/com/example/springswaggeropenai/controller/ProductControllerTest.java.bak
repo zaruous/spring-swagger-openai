@@ -1,0 +1,176 @@
+package com.example.springswaggeropenai.controller;
+
+import com.example.springswaggeropenai.model.Product;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.hamcrest.Matchers.*;
+import static org.hamcrest.MatcherAssert.assertThat;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class ProductControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    // --- Standard API Functional Tests ---
+
+    @Test
+    void testGetAllProducts() throws Exception {
+        mockMvc.perform(get("/api/products"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[0].name", is("Laptop")));
+    }
+
+    @Test
+    void testGetProductById_Found() throws Exception {
+        mockMvc.perform(get("/api/products/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id", is(1)))
+                .andExpect(jsonPath("$.name", is("Laptop")));
+    }
+
+    @Test
+    void testGetProductById_NotFound() throws Exception {
+        mockMvc.perform(get("/api/products/99"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DirtiesContext
+    void testCreateProduct() throws Exception {
+        Product newProduct = new Product(0, "New Keyboard", "Mechanical gaming keyboard", 150.0);
+        String productJson = objectMapper.writeValueAsString(newProduct);
+
+        mockMvc.perform(post("/api/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(productJson))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id", is(4)))
+                .andExpect(jsonPath("$.name", is("New Keyboard")));
+    }
+
+    // --- Real Gemini API Call Simulation ---
+
+    /**
+     * A client to interact with the actual Google Gemini API.
+     * Uses Java 11's built-in HttpClient.
+     */
+    static class GeminiApiClient {
+        private final String apiKey;
+        private final ObjectMapper objectMapper = new ObjectMapper();
+
+        public GeminiApiClient(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getApiCallSuggestion(String naturalLanguageQuery, String apiSpec) throws Exception {
+            if (apiKey == null || apiKey.equals("YOUR_API_KEY") || apiKey.isBlank()) {
+                System.err.println("API Key is not set. Returning a mock response.");
+                return "/api/products/1"; // Return a mock response if key is not set
+            }
+
+            String prompt = "Based on the following OpenAPI spec, suggest an API call for the query: '" + naturalLanguageQuery + "'.\n\n" +
+                            "Return only the raw API path and query string (e.g., /api/products/search?name=laptop). Do not include the domain or any explanations.\n\n" +
+                            "API Spec:\n" + apiSpec;
+
+            String requestBody = "{\"contents\":[{\"parts\":[{\"text\":\"" + prompt.replace("\"", "\\\"") + "\"}]}]}";
+
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + apiKey))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                throw new RuntimeException("Failed to call Gemini API: " + response.body());
+            }
+
+            JsonNode root = objectMapper.readTree(response.body());
+            return root.at("/candidates/0/content/parts/0/text").asText();
+        }
+    }
+
+    @Test
+    //@Disabled("This test is disabled because it requires a real Gemini API key and makes a network call.")
+    void testVerifyApiWithRealGemini() throws Exception {
+        // 1. Get the OpenAPI specification from our running application
+        String apiSpec = mockMvc.perform(get("/v3/api-docs"))
+                .andReturn().getResponse().getContentAsString();
+
+        // 2. IMPORTANT: Replace "YOUR_API_KEY" with your actual Gemini API key to run this test.
+        String apiKey = "AIzaSyDMFeQWLB30GanVYK9z92aPWJ9ySrIBunU";
+        GeminiApiClient geminiClient = new GeminiApiClient(apiKey);
+
+        // 3. Define a natural language query
+        String query = "Find the product with ID 1";
+
+        // 4. Get the suggested API call from the REAL Gemini service
+        String suggestedApiCall = geminiClient.getApiCallSuggestion(query, apiSpec);
+        System.out.println("Gemini Suggestion: " + suggestedApiCall);
+
+        // 5. Use the suggestion to perform a real test against our API
+        mockMvc.perform(get(suggestedApiCall))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id", is(1)));
+
+        System.out.println("Successfully verified the API call suggested by the real Gemini API.");
+    }
+
+    @Test
+    @Disabled("This test is disabled because it requires a real Gemini API key and makes a network call.")
+    void testGeminiPredictsApiResponse() throws Exception {
+        // 1. Call our local API to get the ground-truth JSON response
+        String actualApiResponse = mockMvc.perform(get("/api/products/1"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        // 2. Get the OpenAPI spec to provide context to Gemini
+        String apiSpec = mockMvc.perform(get("/v3/api-docs"))
+                .andReturn().getResponse().getContentAsString();
+
+        // 3. IMPORTANT: Replace "YOUR_API_KEY" with your actual Gemini API key
+        String apiKey = "AIzaSyDMFeQWLB30GanVYK9z92aPWJ9ySrIBunU";
+        GeminiApiClient geminiClient = new GeminiApiClient(apiKey);
+
+        // 4. Create a prompt asking Gemini to predict the API response
+        String query = "Based on the following OpenAPI spec, what is the exact JSON response for a GET request to /api/products/1? Return only the raw JSON object, with no explanations.";
+
+        // 5. Get the predicted JSON response from Gemini
+        String geminiPredictedResponse = geminiClient.getApiCallSuggestion(query, apiSpec);
+        System.out.println("Gemini's Predicted Response: " + geminiPredictedResponse);
+        System.out.println("Actual API Response:       " + actualApiResponse);
+
+        // 6. Compare the actual response with Gemini's prediction
+        JsonNode actualJson = objectMapper.readTree(actualApiResponse);
+        JsonNode predictedJson = objectMapper.readTree(geminiPredictedResponse);
+
+        assertThat(predictedJson, is(actualJson));
+        System.out.println("Successfully verified that Gemini's prediction matches the actual API response.");
+    }
+}
