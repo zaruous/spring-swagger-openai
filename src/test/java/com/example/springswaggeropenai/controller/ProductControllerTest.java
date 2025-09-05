@@ -1,17 +1,14 @@
 package com.example.springswaggeropenai.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
-import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.web.servlet.MockMvc;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -22,12 +19,18 @@ import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Map;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.hamcrest.Matchers.hasSize;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.web.servlet.MockMvc;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -159,12 +162,14 @@ class ProductControllerTest {
                 throw new IllegalArgumentException("API Key is not set.");
             }
             // Correctly escaped JSON format string
-            String requestBody = String.format("{\"contents\":[{\"parts\":[{\"text\":\"%s\"}]}],\"tools\":%s}", naturalLanguageQuery.replace("\"", "\\\""), geminiToolsJson);
+            String requestBody = String.format("{\"contents\":[ {\"role\":\"user\",\"parts\":[{\"text\":\"%s\"}]}], \"tools\" : [%s]}", naturalLanguageQuery.replace("\"", "\\\""), geminiToolsJson);
             System.err.println(requestBody);
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" + apiKey))
+                    .uri(URI.create("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"))
+//            		.uri(URI.create("http://localhost:11434/api/chat"))
                     .header("Content-Type", "application/json")
+                    .header("X-goog-api-key", apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -185,7 +190,7 @@ class ProductControllerTest {
     static class ProductApiClient {
         private final HttpClient client = HttpClient.newHttpClient();
         private final String baseUrl = "http://localhost:8080";
-
+        
         public String searchProducts(String name) throws Exception {
             String encodedName = URLEncoder.encode(name, StandardCharsets.UTF_8);
             HttpRequest request = HttpRequest.newBuilder()
@@ -212,7 +217,7 @@ class ProductControllerTest {
         System.out.println("Dynamically Generated Gemini Tools Schema:\n" + geminiToolsJson);
 
         // 3. IMPORTANT: Replace "YOUR_API_KEY" with your actual Gemini API key.
-        String apiKey = "AIzaSyDMFeQWLB30GanVYK9z92aPWJ9ySrIBunU";
+        String apiKey = "YOUR_API_KEY";
         GeminiFunctionCallingClient geminiClient = new GeminiFunctionCallingClient(apiKey);
 
         // 4. Define a natural language query
@@ -220,6 +225,7 @@ class ProductControllerTest {
 
         // 5. Get the structured FunctionCall object from Gemini
         JsonNode functionCall = geminiClient.getFunctionCall(query, geminiToolsJson);
+        assertNotNull(functionCall);
         System.out.println("\nGemini's Function Call suggestion: " + functionCall.toString());
 
         // 6. Verify the function name and arguments
